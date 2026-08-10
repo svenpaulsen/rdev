@@ -1,5 +1,5 @@
-use crate::rdev::{Event, EventType, ListenError};
-use crate::windows::common::{HOOK, HookError, KEYBOARD, convert, set_key_hook, set_mouse_hook};
+use crate::rdev::{Event, ListenError};
+use crate::windows::common::{HOOK, HookError, convert, set_key_hook, set_mouse_hook};
 use std::os::raw::c_int;
 use std::ptr::null_mut;
 use std::time::SystemTime;
@@ -22,17 +22,13 @@ unsafe extern "system" fn raw_callback(code: c_int, param: WPARAM, lpdata: LPARA
         if code == HC_ACTION {
             let opt = convert(param, lpdata);
             if let Some(event_type) = opt {
-                let name = match &event_type {
-                    EventType::KeyPress(_key) => match (*KEYBOARD).lock() {
-                        Ok(mut keyboard) => keyboard.get_name(lpdata),
-                        Err(_) => None,
-                    },
-                    _ => None,
-                };
+                // No name resolution here: `get_name` runs `ToUnicodeEx`, which
+                // mutates the layout's global dead-key state and breaks dead
+                // keys (`, ´, ^, …) in whatever app has focus.
                 let event = Event {
                     event_type,
                     time: SystemTime::now(),
-                    name,
+                    name: None,
                 };
                 let ptr = &raw mut GLOBAL_CALLBACK;
                 if let Some(callback) = &mut *ptr {
