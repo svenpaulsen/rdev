@@ -154,11 +154,9 @@ unsafe fn convert_native(event_type: &EventType) -> Option<CFRetained<CGEvent>> 
 }
 
 unsafe fn get_current_mouse_location() -> Option<CGPoint> {
-    unsafe {
-        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)?;
-        let event = CGEvent::new(Some(&source))?;
-        Some(CGEvent::location(Some(&event)))
-    }
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)?;
+    let event = CGEvent::new(Some(&source))?;
+    Some(CGEvent::location(Some(&event)))
 }
 
 fn is_modifier_key(key: Key) -> bool {

@@ -28,10 +28,10 @@ unsafe extern "C-unwind" fn raw_callback(
                 // Reborrowing the global callback pointer.
                 // Totally UB. but not sure there's a great alternative.
                 let ptr = &raw mut GLOBAL_CALLBACK;
-                if let Some(callback) = &mut *ptr {
-                    if callback(event).is_none() {
-                        CGEvent::set_type(Some(cg_event.as_ref()), CGEventType::Null)
-                    }
+                if let Some(callback) = &mut *ptr
+                    && callback(event).is_none()
+                {
+                    CGEvent::set_type(Some(cg_event.as_ref()), CGEventType::Null)
                 }
             }
         }
