@@ -186,19 +186,35 @@ pub unsafe fn flags_to_state(flags: u64) -> ModifierState {
     let has_meta = flags & NSEventModifierFlagCommand;
     let mut modifier = 0;
     if has_alt != 0 {
-        modifier += 1 << 3;
+        modifier |= 1 << 3;
     }
+    // `UCKeyTranslate` takes the Carbon modifier bits shifted down by 8:
+    // command 0, shift 1, alpha lock 2, option 3, control 4. Caps Lock
+    // has its own bit — on the shift bit it turned caps + shift into a
+    // third modifier.
     if has_caps_lock != 0 {
-        modifier += 1 << 1;
+        modifier |= 1 << 2;
     }
     if has_control != 0 {
-        modifier += 1 << 4;
+        modifier |= 1 << 4;
     }
     if has_shift != 0 {
-        modifier += 1 << 1;
+        modifier |= 1 << 1;
     }
     if has_meta != 0 {
-        modifier += 1 << 0;
+        modifier |= 1 << 0;
     }
     modifier
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keeps_caps_lock_and_shift_on_their_own_bits() {
+        let both =
+            unsafe { flags_to_state(NSEventModifierFlagCapsLock | NSEventModifierFlagShift) };
+        assert_eq!(both, (1 << 1) | (1 << 2));
+    }
 }
