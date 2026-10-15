@@ -11,10 +11,11 @@ use winapi::shared::ntdef::LONG;
 use winapi::shared::windef::HHOOK;
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::winuser::{
-    KBDLLHOOKSTRUCT, MSLLHOOKSTRUCT, SetWindowsHookExA, WH_KEYBOARD_LL, WH_MOUSE_LL, WHEEL_DELTA,
-    WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
-    WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN,
-    WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP,
+    DispatchMessageA, GetMessageA, KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, SetWindowsHookExA,
+    TranslateMessage, WH_KEYBOARD_LL, WH_MOUSE_LL, WHEEL_DELTA, WM_KEYDOWN, WM_KEYUP,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
+    WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN,
+    WM_XBUTTONUP,
 };
 pub const TRUE: i32 = 1;
 pub const FALSE: i32 = 0;
@@ -115,6 +116,28 @@ type RawCallback = unsafe extern "system" fn(code: c_int, param: WPARAM, lpdata:
 pub enum HookError {
     Mouse(DWORD),
     Key(DWORD),
+}
+
+/// Runs the message loop of a thread that installed the hooks. The hooks
+/// are called on that thread while it waits for messages, so it has to
+/// keep waiting: a single `GetMessageA` returns with the first message
+/// posted to the thread, the thread ends and takes the hooks with it —
+/// silently. Returns once `WM_QUIT` arrives, or the error code when
+/// `GetMessageA` fails.
+pub unsafe fn message_loop() -> Result<(), DWORD> {
+    unsafe {
+        let mut msg: MSG = std::mem::zeroed();
+        loop {
+            match GetMessageA(&mut msg, null_mut(), 0, 0) {
+                0 => return Ok(()),
+                -1 => return Err(GetLastError()),
+                _ => {
+                    TranslateMessage(&msg);
+                    DispatchMessageA(&msg);
+                }
+            }
+        }
+    }
 }
 
 pub unsafe fn set_key_hook(callback: RawCallback) -> Result<(), HookError> {

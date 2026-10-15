@@ -1,8 +1,9 @@
 use crate::rdev::{Event, EventType, GrabError};
-use crate::windows::common::{HOOK, HookError, KEYBOARD, convert, set_key_hook, set_mouse_hook};
-use std::ptr::null_mut;
+use crate::windows::common::{
+    HOOK, HookError, KEYBOARD, convert, message_loop, set_key_hook, set_mouse_hook,
+};
 use std::time::SystemTime;
-use winapi::um::winuser::{CallNextHookEx, GetMessageA, HC_ACTION};
+use winapi::um::winuser::{CallNextHookEx, HC_ACTION};
 
 static mut GLOBAL_CALLBACK: Option<Box<dyn FnMut(Event) -> Option<Event>>> = None;
 
@@ -56,7 +57,6 @@ where
         set_key_hook(raw_callback)?;
         set_mouse_hook(raw_callback)?;
 
-        GetMessageA(null_mut(), null_mut(), 0, 0);
+        message_loop().map_err(GrabError::MessageLoopError)
     }
-    Ok(())
 }

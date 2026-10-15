@@ -33,6 +33,8 @@ pub enum ListenError {
     KeyHookError(u32),
     /// Windows
     MouseHookError(u32),
+    /// Windows: the message loop of the hook thread failed.
+    MessageLoopError(u32),
 }
 
 /// Errors that occur when trying to grab OS events.
@@ -53,6 +55,8 @@ pub enum GrabError {
     KeyHookError(u32),
     /// Windows
     MouseHookError(u32),
+    /// Windows: the message loop of the hook thread failed.
+    MessageLoopError(u32),
     /// All
     SimulateError,
     IoError(std::io::Error),
