@@ -1,4 +1,5 @@
 use crate::SimulateError;
+use crate::linux::wayland::common::side_button_code;
 use crate::linux::wayland::keycodes::ukey_from_key;
 use crate::rdev::{Button, EventType};
 use input_linux::{
@@ -96,7 +97,9 @@ impl Handle {
                         Button::Left => UKey::ButtonLeft,
                         Button::Right => UKey::ButtonRight,
                         Button::Middle => UKey::ButtonMiddle,
-                        Button::Unknown(_) => return Err(SimulateError),
+                        Button::Unknown(number) => side_button_code(*number)
+                            .and_then(|code| UKey::from_code(code).ok())
+                            .ok_or(SimulateError)?,
                     };
                     let time = Self::get_current_time();
                     let event = KeyEvent::new(time, ukey, KeyState::PRESSED);
@@ -110,7 +113,9 @@ impl Handle {
                         Button::Left => UKey::ButtonLeft,
                         Button::Right => UKey::ButtonRight,
                         Button::Middle => UKey::ButtonMiddle,
-                        Button::Unknown(_) => return Err(SimulateError),
+                        Button::Unknown(number) => side_button_code(*number)
+                            .and_then(|code| UKey::from_code(code).ok())
+                            .ok_or(SimulateError)?,
                     };
                     let time = Self::get_current_time();
                     let event = KeyEvent::new(time, ukey, KeyState::RELEASED);

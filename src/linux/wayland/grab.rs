@@ -1,3 +1,4 @@
+use super::common::side_button_number;
 use super::keyboard::Keyboard;
 use crate::rdev::{Button, Event, EventType, GrabError, Key, KeyboardState};
 use epoll::ControlOptions::{EPOLL_CTL_ADD, EPOLL_CTL_DEL};
@@ -118,7 +119,7 @@ macro_rules! convert_buttons {
                 $(
                     EV_KEY::$ev_key => Some(Button::$rdev_key),
                 )*
-                _ => None,
+                _ => side_button(key),
             }
         }
 
@@ -132,6 +133,20 @@ macro_rules! convert_buttons {
         //     }
         // }
     };
+}
+
+/// Side buttons, numbered as `listen` reports them (see `common`), so a
+/// grab callback can see and block them too.
+fn side_button(key: &EV_KEY) -> Option<Button> {
+    let code = match key {
+        EV_KEY::BTN_SIDE => 275,
+        EV_KEY::BTN_EXTRA => 276,
+        EV_KEY::BTN_FORWARD => 277,
+        EV_KEY::BTN_BACK => 278,
+        EV_KEY::BTN_TASK => 279,
+        _ => return None,
+    };
+    side_button_number(code).map(Button::Unknown)
 }
 
 #[rustfmt::skip]

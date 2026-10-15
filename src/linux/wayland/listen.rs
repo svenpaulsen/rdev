@@ -1,4 +1,5 @@
 extern crate libc;
+use super::common::side_button_number;
 use super::keyboard::Keyboard;
 use super::keycodes::key_from_code;
 use crate::rdev::{Event, KeyboardState, ListenError};
@@ -30,7 +31,7 @@ fn convert_type(libevent: LibEvent) -> Option<EventType> {
                 272 => Some(Button::Left),
                 273 => Some(Button::Right),
                 274 => Some(Button::Middle),
-                _ => None,
+                code => side_button_number(code).map(Button::Unknown),
             };
             if let Some(rdev_btn) = rdev_btn {
                 let state: ButtonState = btn.button_state();
