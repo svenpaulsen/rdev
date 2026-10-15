@@ -1,14 +1,14 @@
 use objc2_core_foundation::{CFRetained, CGPoint};
 use objc2_core_graphics::{
-    CGEvent, CGEventField, CGEventFlags, CGEventSource, CGEventSourceStateID, CGEventTapLocation,
-    CGEventType, CGMouseButton, CGScrollEventUnit,
+    CGEvent, CGEventField, CGEventSource, CGEventSourceStateID, CGEventTapLocation, CGEventType,
+    CGMouseButton, CGScrollEventUnit,
 };
 
 use crate::Key;
 use crate::rdev::{Button, EventType, SimulateError};
 use std::convert::TryInto;
 
-use crate::macos::common::LAST_FLAGS;
+use crate::macos::common::{LAST_FLAGS, modifier_flags};
 use crate::macos::keycodes::code_from_key;
 
 unsafe fn convert_native_with_source(
@@ -31,21 +31,7 @@ unsafe fn convert_native_with_source(
 
                     // Get current flags and update them
                     let mut new_flags = LAST_FLAGS.lock().unwrap();
-                    match key {
-                        Key::ShiftLeft | Key::ShiftRight => {
-                            new_flags.insert(CGEventFlags::MaskShift);
-                        }
-                        Key::ControlLeft | Key::ControlRight => {
-                            new_flags.insert(CGEventFlags::MaskControl);
-                        }
-                        Key::AltGr | Key::Alt => {
-                            new_flags.insert(CGEventFlags::MaskAlternate);
-                        }
-                        Key::MetaLeft | Key::MetaRight => {
-                            new_flags.insert(CGEventFlags::MaskCommand);
-                        }
-                        _ => {}
-                    }
+                    *new_flags = modifier_flags(*new_flags, code, true);
                     CGEvent::set_flags(Some(&event), *new_flags);
                     // event.set_flags(*new_flags);
                     Some(event)
@@ -70,21 +56,7 @@ unsafe fn convert_native_with_source(
 
                     // Get current flags and update them
                     let mut new_flags = LAST_FLAGS.lock().unwrap();
-                    match key {
-                        Key::ShiftLeft | Key::ShiftRight => {
-                            new_flags.remove(CGEventFlags::MaskShift);
-                        }
-                        Key::ControlLeft | Key::ControlRight => {
-                            new_flags.remove(CGEventFlags::MaskControl);
-                        }
-                        Key::AltGr | Key::Alt => {
-                            new_flags.remove(CGEventFlags::MaskAlternate);
-                        }
-                        Key::MetaLeft | Key::MetaRight => {
-                            new_flags.remove(CGEventFlags::MaskCommand);
-                        }
-                        _ => {}
-                    }
+                    *new_flags = modifier_flags(*new_flags, code, false);
                     CGEvent::set_flags(Some(&event), *new_flags);
                     Some(event)
                 } else {
@@ -184,5 +156,62 @@ pub fn simulate(event_type: &EventType) -> Result<(), SimulateError> {
         } else {
             Err(SimulateError)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::macos::common::convert;
+    use crate::macos::keyboard::Keyboard;
+    use core::ptr::NonNull;
+    use objc2_core_graphics::CGEventFlags;
+    use serial_test::serial;
+
+    /// What a listener makes of the event `simulate` would post.
+    fn listened(event_type: &EventType) -> Option<EventType> {
+        let event = unsafe { convert_native(event_type) }?;
+        let kind = CGEvent::r#type(Some(&event));
+        let mut keyboard = Keyboard::new().unwrap();
+        unsafe { convert(kind, NonNull::from(&*event), &mut keyboard) }.map(|e| e.event_type)
+    }
+
+    #[test]
+    #[serial]
+    fn simulated_modifiers_are_heard_as_sent() {
+        *LAST_FLAGS.lock().unwrap() = CGEventFlags(0);
+        for event in [
+            EventType::KeyPress(Key::ShiftLeft),
+            EventType::KeyPress(Key::ShiftRight),
+            EventType::KeyRelease(Key::ShiftLeft),
+            EventType::KeyRelease(Key::ShiftRight),
+            EventType::KeyPress(Key::ControlRight),
+            EventType::KeyRelease(Key::ControlRight),
+        ] {
+            assert_eq!(listened(&event), Some(event));
+        }
+        assert!(!LAST_FLAGS.lock().unwrap().contains(CGEventFlags::MaskShift));
+    }
+
+    #[test]
+    #[serial]
+    fn simulated_keys_carry_a_physically_held_modifier() {
+        *LAST_FLAGS.lock().unwrap() = CGEventFlags(0);
+        // A physical left Shift going down, as the listener sees it.
+        let shift = CGEvent::new_keyboard_event(None, 56, true).unwrap();
+        CGEvent::set_type(Some(&shift), CGEventType::FlagsChanged);
+        CGEvent::set_flags(Some(&shift), CGEventFlags(CGEventFlags::MaskShift.0 | 0x2));
+        let mut keyboard = Keyboard::new().unwrap();
+        unsafe {
+            convert(
+                CGEventType::FlagsChanged,
+                NonNull::from(&*shift),
+                &mut keyboard,
+            )
+        };
+
+        let key = unsafe { convert_native(&EventType::KeyPress(Key::KeyA)) }.unwrap();
+        assert!(CGEvent::flags(Some(&key)).contains(CGEventFlags::MaskShift));
+        *LAST_FLAGS.lock().unwrap() = CGEventFlags(0);
     }
 }

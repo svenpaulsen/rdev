@@ -21,6 +21,55 @@ pub fn set_is_main_thread(b: bool) {
     KEYBOARD_STATE.lock().unwrap().set_is_main_thread(b);
 }
 
+/// The device-dependent flag bit (`NX_DEVICE*KEYMASK`) of a modifier key,
+/// by virtual keycode. `None` for keys without one, e.g. Caps Lock, which
+/// only toggles a lock state.
+fn device_mask(code: u16) -> Option<u64> {
+    Some(match code {
+        59 => 0x0000_0001, // ControlLeft
+        56 => 0x0000_0002, // ShiftLeft
+        60 => 0x0000_0004, // ShiftRight
+        55 => 0x0000_0008, // MetaLeft
+        54 => 0x0000_0010, // MetaRight
+        58 => 0x0000_0020, // Alt
+        61 => 0x0000_0040, // AltGr
+        62 => 0x0000_2000, // ControlRight
+        _ => return None,
+    })
+}
+
+/// The modifier flags after the modifier key `code` went down or up: its
+/// device bit set or cleared, and the shared flag of its group (Shift,
+/// Control, …) set while either key of the group is still held. What a
+/// physical key produces, so a listener tells simulated presses and
+/// releases apart the same way. Other keys leave the flags as they are.
+pub(crate) fn modifier_flags(flags: CGEventFlags, code: u16, down: bool) -> CGEventFlags {
+    const GROUPS: [(u64, CGEventFlags); 4] = [
+        (0x0000_0002 | 0x0000_0004, CGEventFlags::MaskShift),
+        (0x0000_0001 | 0x0000_2000, CGEventFlags::MaskControl),
+        (0x0000_0020 | 0x0000_0040, CGEventFlags::MaskAlternate),
+        (0x0000_0008 | 0x0000_0010, CGEventFlags::MaskCommand),
+    ];
+    let Some(mask) = device_mask(code) else {
+        return flags;
+    };
+    let mut bits = if down {
+        flags.0 | mask
+    } else {
+        flags.0 & !mask
+    };
+    for (devices, shared) in GROUPS {
+        if devices & mask != 0 {
+            if bits & devices != 0 {
+                bits |= shared.0;
+            } else {
+                bits &= !shared.0;
+            }
+        }
+    }
+    CGEventFlags(bits)
+}
+
 /// Middle and side buttons: macOS numbers them from 2 (middle) up, after
 /// left (0) and right (1). Anything past the middle button is passed on
 /// with that number.
@@ -108,52 +157,19 @@ pub unsafe fn convert(
                 let code = code.try_into().ok()?;
                 let flags = CGEvent::flags(Some(cg_event.as_ref()));
                 let key = key_from_code_or_name(code, None);
-
-                // Determine if this is a press or release based on flag changes
-                let mut global_flags = LAST_FLAGS.lock().unwrap();
-                if flags.contains(CGEventFlags::MaskShift)
-                    && !global_flags.contains(CGEventFlags::MaskShift)
-                {
-                    *global_flags = flags;
-                    Some(EventType::KeyPress(key))
-                } else if !flags.contains(CGEventFlags::MaskShift)
-                    && global_flags.contains(CGEventFlags::MaskShift)
-                {
-                    *global_flags = flags;
-                    Some(EventType::KeyRelease(key))
-                } else if flags.contains(CGEventFlags::MaskControl)
-                    && !global_flags.contains(CGEventFlags::MaskControl)
-                {
-                    *global_flags = flags;
-                    Some(EventType::KeyPress(key))
-                } else if !flags.contains(CGEventFlags::MaskControl)
-                    && global_flags.contains(CGEventFlags::MaskControl)
-                {
-                    *global_flags = flags;
-                    Some(EventType::KeyRelease(key))
-                } else if flags.contains(CGEventFlags::MaskAlternate)
-                    && !global_flags.contains(CGEventFlags::MaskAlternate)
-                {
-                    *global_flags = flags;
-                    Some(EventType::KeyPress(key))
-                } else if !flags.contains(CGEventFlags::MaskAlternate)
-                    && global_flags.contains(CGEventFlags::MaskAlternate)
-                {
-                    *global_flags = flags;
-                    Some(EventType::KeyRelease(key))
-                } else if flags.contains(CGEventFlags::MaskCommand)
-                    && !global_flags.contains(CGEventFlags::MaskCommand)
-                {
-                    *global_flags = flags;
-                    Some(EventType::KeyPress(key))
-                } else if !flags.contains(CGEventFlags::MaskCommand)
-                    && global_flags.contains(CGEventFlags::MaskCommand)
-                {
-                    *global_flags = flags;
-                    Some(EventType::KeyRelease(key))
+                // Each modifier key has its own device bit in the flags, so the
+                // event itself says whether this key went down or up. The shared
+                // Shift/Control/… flags can't: with both Shift keys held,
+                // releasing one leaves the flag set. `LAST_FLAGS` only keeps
+                // the physical state for `simulate`, which stamps it onto the
+                // key events it posts; the detection never reads it.
+                *LAST_FLAGS.lock().unwrap() = flags;
+                let held = flags.0 & device_mask(code)? != 0;
+                Some(if held {
+                    EventType::KeyPress(key)
                 } else {
-                    None
-                }
+                    EventType::KeyRelease(key)
+                })
             }
             CGEventType::ScrollWheel => {
                 let delta_y = CGEvent::integer_value_field(
@@ -221,4 +237,64 @@ pub unsafe fn convert(
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SHIFT: u64 = 1 << 17;
+    const LEFT_SHIFT: u64 = 0x2;
+    const RIGHT_SHIFT: u64 = 0x4;
+
+    fn flags_changed(code: u16, flags: u64) -> Option<EventType> {
+        let event = CGEvent::new_keyboard_event(None, code, true).unwrap();
+        CGEvent::set_type(Some(&event), CGEventType::FlagsChanged);
+        CGEvent::set_flags(Some(&event), CGEventFlags(flags));
+        let mut keyboard = Keyboard::new().unwrap();
+        unsafe {
+            convert(
+                CGEventType::FlagsChanged,
+                NonNull::from(&*event),
+                &mut keyboard,
+            )
+        }
+        .map(|event| event.event_type)
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn tells_both_shift_keys_apart() {
+        use crate::rdev::Key::{ShiftLeft, ShiftRight};
+        assert_eq!(
+            flags_changed(56, SHIFT | LEFT_SHIFT),
+            Some(EventType::KeyPress(ShiftLeft))
+        );
+        assert_eq!(
+            flags_changed(60, SHIFT | LEFT_SHIFT | RIGHT_SHIFT),
+            Some(EventType::KeyPress(ShiftRight))
+        );
+        assert_eq!(
+            flags_changed(56, SHIFT | RIGHT_SHIFT),
+            Some(EventType::KeyRelease(ShiftLeft))
+        );
+        assert_eq!(
+            flags_changed(60, 0),
+            Some(EventType::KeyRelease(ShiftRight))
+        );
+    }
+
+    #[test]
+    fn keeps_the_shared_flag_while_either_key_is_held() {
+        let shift = CGEventFlags::MaskShift.0;
+        let left = modifier_flags(CGEventFlags(0), 56, true);
+        assert_eq!(left.0, shift | LEFT_SHIFT);
+        let both = modifier_flags(left, 60, true);
+        assert_eq!(both.0, shift | LEFT_SHIFT | RIGHT_SHIFT);
+        let right = modifier_flags(both, 56, false);
+        assert_eq!(right.0, shift | RIGHT_SHIFT);
+        assert_eq!(modifier_flags(right, 60, false).0, 0);
+        // Keys without a device bit leave the flags alone.
+        assert_eq!(modifier_flags(right, 57, true).0, right.0);
+    }
 }
