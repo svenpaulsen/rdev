@@ -143,8 +143,11 @@ impl Handle {
                 }
                 EventType::Wheel { delta_x, delta_y } => {
                     let time = Self::get_current_time();
-                    let event_x =
-                        RelativeEvent::new(time, RelativeAxis::WheelHiRes, (*delta_x * 120) as i32);
+                    let event_x = RelativeEvent::new(
+                        time,
+                        RelativeAxis::HorizontalWheelHiRes,
+                        (*delta_x * 120) as i32,
+                    );
                     let event_x: input_event = InputEvent::from(event_x).into();
                     let event_y =
                         RelativeEvent::new(time, RelativeAxis::WheelHiRes, (*delta_y * 120) as i32);
