@@ -21,6 +21,22 @@ pub fn set_is_main_thread(b: bool) {
     KEYBOARD_STATE.lock().unwrap().set_is_main_thread(b);
 }
 
+/// Middle and side buttons: macOS numbers them from 2 (middle) up, after
+/// left (0) and right (1). Anything past the middle button is passed on
+/// with that number.
+unsafe fn other_button(cg_event: NonNull<CGEvent>) -> Button {
+    let number = unsafe {
+        CGEvent::integer_value_field(
+            Some(cg_event.as_ref()),
+            CGEventField::MouseEventButtonNumber,
+        )
+    };
+    match number {
+        2 => Button::Middle,
+        n => Button::Unknown(n.try_into().unwrap_or(u8::MAX)),
+    }
+}
+
 pub unsafe fn convert(
     _type: CGEventType,
     cg_event: NonNull<CGEvent>,
@@ -32,6 +48,8 @@ pub unsafe fn convert(
             CGEventType::LeftMouseUp => Some(EventType::ButtonRelease(Button::Left)),
             CGEventType::RightMouseDown => Some(EventType::ButtonPress(Button::Right)),
             CGEventType::RightMouseUp => Some(EventType::ButtonRelease(Button::Right)),
+            CGEventType::OtherMouseDown => Some(EventType::ButtonPress(other_button(cg_event))),
+            CGEventType::OtherMouseUp => Some(EventType::ButtonRelease(other_button(cg_event))),
             CGEventType::MouseMoved => {
                 let point = CGEvent::location(Some(cg_event.as_ref()));
                 // let point = cg_event.location();
@@ -48,6 +66,13 @@ pub unsafe fn convert(
                 })
             }
             CGEventType::RightMouseDragged => {
+                let point = CGEvent::location(Some(cg_event.as_ref()));
+                Some(EventType::MouseMove {
+                    x: point.x,
+                    y: point.y,
+                })
+            }
+            CGEventType::OtherMouseDragged => {
                 let point = CGEvent::location(Some(cg_event.as_ref()));
                 Some(EventType::MouseMove {
                     x: point.x,
